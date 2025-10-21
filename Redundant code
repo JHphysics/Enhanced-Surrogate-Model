@@ -1,0 +1,120 @@
+import tensorflow as tf
+from tensorflow.keras.layers import Input, Dense
+from tensorflow.keras.models import Model
+from tensorflow.keras.datasets import mnist
+import matplotlib.pyplot as plt
+import numpy as np
+
+# =========================
+# I made this code to look a bit more practical, but it’s still not very meaningful. 
+# It uses MNIST with one-hot encoding, but instead of using strict 0s and 1s, the values are randomized. 
+# Honestly, this algorithm really makes sense when applied to something like efficiency maps.
+# =========================
+
+# =========================
+# 1. Prepare data
+# =========================
+(x_train, y_train), (x_test, y_test) = mnist.load_data()
+x_train = x_train.astype('float32') / 255.
+x_test = x_test.astype('float32') / 255.
+
+x_train_flat = x_train.reshape(-1, 28*28)
+x_test_flat = x_test.reshape(-1, 28*28)
+
+num_classes = 10
+latent_dim = 10  # latent vector size
+
+# =========================
+# 2. Generate custom latent targets
+# =========================
+def generate_latent_targets(labels, latent_dim):
+    latent_targets = np.zeros((labels.shape[0], latent_dim))
+    for i, label in enumerate(labels):
+        # 0~1 사이의 임의 값 생성, 라벨 위치에만 값 부여
+        latent_targets[i, label] = np.random.uniform(0.0, 1.0)
+    return latent_targets
+
+y_train_latent = generate_latent_targets(y_train, latent_dim)
+y_test_latent = generate_latent_targets(y_test, latent_dim)
+
+# =========================
+# 3. Define autoencoder (multi-output)
+# =========================
+input_dim = 28*28
+hidden_units = 128
+
+inputs = Input(shape=(input_dim,))
+h = Dense(hidden_units, activation='relu')(inputs)
+latent = Dense(latent_dim, activation='sigmoid', name='latent')(h)  # sigmoid for 0~1 range
+
+h_dec = Dense(hidden_units, activation='relu')(latent)
+outputs = Dense(input_dim, activation='sigmoid', name='reconstruction')(h_dec)
+
+autoencoder = Model(inputs, [outputs, latent])
+
+# =========================
+# 4. Compile model
+# =========================
+losses = {'reconstruction': 'mse', 'latent': 'mse'}
+loss_weights = {'reconstruction': 1.0, 'latent': 1.0}
+
+autoencoder.compile(optimizer='adam', loss=losses, loss_weights=loss_weights)
+
+# =========================
+# 5. Train model
+# =========================
+autoencoder.fit(
+    x_train_flat,
+    {'reconstruction': x_train_flat, 'latent': y_train_latent},
+    epochs=20,
+    batch_size=256,
+    shuffle=True,
+    validation_data=(x_test_flat, {'reconstruction': x_test_flat, 'latent': y_test_latent})
+)
+
+# =========================
+# 6. Extract latent vectors
+# =========================
+encoder = Model(inputs, autoencoder.get_layer('latent').output)
+latent_test = encoder.predict(x_test_flat)
+
+# =========================
+# 7. Visualize latent vectors (average per class)
+avg_latent = np.zeros((num_classes, latent_dim))
+for i in range(num_classes):
+    avg_latent[i] = np.mean(latent_test[y_test == i], axis=0)
+
+plt.figure(figsize=(10, 6))
+plt.imshow(avg_latent, cmap='viridis', aspect='auto')
+plt.colorbar()
+plt.xlabel('Latent dimension')
+plt.ylabel('Digit class')
+plt.title('Average latent vectors for each digit class (random values)')
+plt.show()
+
+# =========================
+# 8. Decoder model
+# =========================
+latent_input = Input(shape=(latent_dim,))
+h_dec_input = autoencoder.layers[-2](latent_input)
+decoder_output = autoencoder.layers[-1](h_dec_input)
+decoder = Model(latent_input, decoder_output)
+
+# =========================
+# 9. Generate images from custom latent vectors
+# =========================
+# Example: set latent vector values manually
+custom_latent_vectors = np.zeros((num_classes, latent_dim))
+for i in range(num_classes):
+    custom_latent_vectors[i, i] = np.random.uniform(0.0, 1.0)
+
+generated_imgs = decoder.predict(custom_latent_vectors)
+
+plt.figure(figsize=(12, 2))
+for i in range(num_classes):
+    plt.subplot(1, num_classes, i+1)
+    plt.imshow(generated_imgs[i].reshape(28, 28), cmap='gray')
+    plt.axis('off')
+    plt.title(str(i))
+plt.suptitle('Decoder outputs from custom latent vectors')
+plt.show()
